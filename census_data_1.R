@@ -15,3 +15,8 @@ head(data_df)
 summary(data_df)
 str(data_df)
 head(data_df)
+
+############################################################################################################################
+
+library(ggplot2)  # For data visualization
+library(caret)    # For machine learning functions
