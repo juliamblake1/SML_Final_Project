@@ -1,0 +1,664 @@
+---
+title: "Final Project Dilan"
+author: "Dilan Caro"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Final Project
+
+First we will download the data.
+
+```{r}
+#install.packages("ipumsr") # Install the ipumsr library
+library(ipumsr)
+#set_ipums_api_key("YOUR_API_KEY_HERE") 
+```
+
+Download the data using the api, 
+
+```{r ,eval=FALSE}
+extract_definition <- define_extract_usa(
+    "Ipums Dataset for R project all variables",
+    c("us2019a", "us2020a", "us2021a", "us2022a"),
+    c("YEAR", "SAMPLE", "SERIAL", "CBSERIAL", "HHWT", "CLUSTER", "STATEFIP", "COUNTYFIP", "METRO", "STRATA", "GQ", "OWNERSHP", "OWNERSHPD", "MORTGAGE", "ACREHOUS", "MORTAMT1", "RENT", "RENTGRS", "VACANCY", "ROOMS", "UNITSSTR", "BEDROOMS", "NFAMS", "PERNUM", "PERWT", "FAMSIZE", "NCHILD", "SEX", "AGE", "MARST", "MARRNO", "RACE", "RACED", "CITIZEN", "EDUC", "EDUCD", "EMPSTAT", "EMPSTATD", "CLASSWKR", "CLASSWKRD", "OCC", "INDNAICS", "INCTOT", "DENSITY", "BPL","LANGUAGE", "TRIBE")
+)
+
+# submit the extract to IPUMS USA for processing
+submitted_extract <- submit_extract(extract_definition)
+
+# access the extract number, stored in the return value of submit_extract
+submitted_extract$number
+
+submitted_extract <- get_extract_info(submitted_extract)
+submitted_extract
+
+is_extract_ready(submitted_extract) # Check if the extract is ready to be downloaded. 
+
+downloadable_extract <- wait_for_extract(submitted_extract)
+
+path_to_ddi_file <- download_extract(downloadable_extract)
+
+data <- read_ipums_micro(path_to_ddi_file)
+```
+
+```{r , eval= FALSE}
+ipums_conditions() # For the final paper citation 
+```
+
+
+# Analysis 
+
+For the analysis of the rent price against different variables, we first should check on normality, 
+
+### Loading the datasets
+
+```{r}
+setwd("C:/Users/julia/OneDrive/Documents/Columbia/Spring 2024/SML (STAT5241)/Final Proj")
+
+renters_2022 <- read.csv("renters_2022_transformed.csv")
+train_data <- read.csv("train_transformed.csv")
+test_data <- read.csv("test_transformed.csv")
+validation_data <- read.csv("validation_transformed.csv")
+
+predictors <- c("STATEFIP", "SEX", "AGE", "MARST", "BPL", "LANGUAGE", "DENSITY",
+                "INCTOT", "RACE", "CITIZEN", "EDUC", "EMPSTAT", "REGION")
+response <- "RENTGRS"
+
+```
+
+
+### Checking normality
+Before doing any analysis , let's check if the data is normally distributed to then apply a Gaussian model on it. Otherwise, we may decide to do a transformation , or a different distribution.
+
+Create a histogram 
+```{r}
+hist(renters_2022$RENTGRS, main="Histogram of RENTGRS", xlab="RENTGRS")
+```
+
+Based on the data , it seems to be right skewed. However, it does seem to have some component of normality . If the values on the right are only outliers, we may consider some tests to check for them and remove them. However, first , let's check a transformation using log
+```{r}
+hist(log(renters_2022$RENTGRS), main="Histogram of RENTGRS", xlab="RENTGRS")
+```
+
+
+Let's check for normality using QQ plots
+```{r}
+qqnorm(renters_2022$RENTGRS)
+qqline(renters_2022$RENTGRS, col = "red", lwd = 3)
+```
+
+
+This looks a bit like a lognormal distribution, so let's apply a transformation and see how it looks.
+```{r}
+qqnorm(log(renters_2022$RENTGRS))
+qqline(log(renters_2022$RENTGRS), col = "red", lwd = 3)
+```
+
+Now this plot looks closer to the theoretical quantiles, however, seems to have heavier tails.
+Let's perform the Shapiro-Wilk normality test 
+```{r}
+sampled_data <- renters_2022$RENTGRS[sample(length(renters_2022$RENTGRS), 5000)]
+shapiro.test(log(sampled_data+1))
+```
+
+
+This test tell us that there is a significant difference between our data and a normal distribution . 
+We can try to use a non -parametric then
+```{r}
+#install.packages("MASS")
+library(MASS)
+
+# Estimate parameters of the log-normal distribution
+params <- fitdistr(renters_2022$RENTGRS, densfun = "lognormal")
+
+# KS Test against the log-normal distribution
+ks.test(renters_2022$RENTGRS, "plnorm", meanlog = params$estimate["meanlog"], sdlog = params$estimate["sdlog"])
+
+```
+
+Although, it gave us a warning, it still agrees with the shapiro-wilk test that our data is  significantly different than a gaussian distribution. 
+
+Let's look at the types of our data. 
+```{r}
+str(renters_2022)
+```
+
+We observe that our data is integers and numerics, let's convert some to factors so that we can perform a generalized linear model
+
+```{r}
+test<- test_data
+
+test$SEX <- as.factor(test$SEX)
+test$RACE <- as.factor(test$RACE)
+test$CITIZEN <- as.factor(test$CITIZEN)
+test$LANGUAGE <- as.factor(test$LANGUAGE)
+
+test$STATEFIP <- as.factor(test$STATEFIP)
+test$MARST <- as.factor(test$MARST)
+test$EDUC <- as.factor(test$EDUC)
+test$EMPSTAT <- as.factor(test$EMPSTAT)
+test$REGION <- as.factor(test$REGION)
+
+# Train data
+train<- train_data
+
+train$SEX <- as.factor(train$SEX)
+train$RACE <- as.factor(train$RACE)
+train$CITIZEN <- as.factor(train$CITIZEN)
+train$LANGUAGE <- as.factor(train$LANGUAGE)
+
+train$STATEFIP <- as.factor(train$STATEFIP)
+train$MARST <- as.factor(train$MARST)
+train$EDUC <- as.factor(train$EDUC)
+train$EMPSTAT <- as.factor(train$EMPSTAT)
+train$REGION <- as.factor(train$REGION)
+```
+
+Let's include a log on the variable RENTGRS
+```{r}
+library(stats)
+
+test$log_RENTGRS <- log(test$RENTGRS + 1)
+train$log_RENTGRS <- log(train$RENTGRS + 1)
+
+model_gamma <- glm(log_RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + REGION, 
+                   family = Gamma(link = "log"), data = train)
+
+# Summary of the model
+summary(model_gamma)
+
+```
+
+We can see that REGION gave us errors for singularities, so let's remove them for now. 
+```{r}
+predictors=c("STATEFIP", "SEX" , "AGE" , "MARST" , "BPL", "LANGUAGE","DENSITY", "INCTOT", "RACE", "CITIZEN", "EDUC", "EMPSTAT")
+```
+
+```{r}
+model_gamma <- glm(log_RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT , 
+                   family = Gamma(link = "log"), data = train)
+
+
+# Summary of the model
+summary(model_gamma)
+
+predictions_gamma <- predict(model_gamma, newdata = test[, predictors])
+rmse_glm_gamma <- sqrt(mean((predictions_gamma - test[, response])^2))
+cat("RMSE:", rmse_glm_gamma, "\n")
+```
+
+```{r}
+plot(model_gamma)
+```
+
+We now obstain a RSME of XXX.
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(model_gamma, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+
+Let's try a gaussian model since we had seen it was somewhat normally distributed after transformation.
+
+```{r}
+model_gaussian <- glm(log_RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT , 
+                   family = gaussian(link = "log"), data = train)
+
+# Summary of the model
+summary(model_gaussian)
+
+predictions_gaussian <- predict(model_gaussian, newdata = test[, predictors])
+rmse_glm_gaussian <- sqrt(mean((predictions_gaussian- test[, response])^2))
+cat("RMSE:", rmse_glm_gaussian, "\n")
+```
+
+```{r}
+plot(model_gaussian)
+```
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(model_gaussian, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+Does not predict at all. 
+
+
+Let's remove the link.
+
+```{r}
+model_gaussian_no_link <- glm(log_RENTGRS ~STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT, 
+                   family = gaussian(), data = train)
+
+# Summary of the model
+summary(model_gaussian_no_link)
+
+predictions_gaussian_no_link <- predict(model_gaussian_no_link, newdata = test[, predictors])
+rmse_glm_gaussian_no_link <- sqrt(mean((predictions_gaussian_no_link- test[, response])^2))
+cat("RMSE:", rmse_glm_gaussian_no_link, "\n")
+```
+```{r}
+plot(model_gaussian_no_link)
+```
+
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(model_gaussian_no_link, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+
+This model, does not predict it well at all.
+
+
+Since we had transformed the variable. We assume normality, and can do just gaussian family, it lowered the mse only XX points. 
+
+```{r}
+model_gaussian_no_log <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT, 
+                   family = gaussian(), data = train)
+
+# Summary of the model
+summary(model_gaussian_no_log)
+
+predictions_gaussian_no_log <- predict(model_gaussian_no_log, newdata = test[, predictors])
+rmse_glm_gaussian_no_log <- sqrt(mean((predictions_gaussian_no_log- test[, response])^2))
+cat("RMSE:", rmse_glm_gaussian_no_log, "\n")
+```
+#This is a much better RMSE, no log of rents, no log link.
+
+```{r}
+plot(model_gaussian_no_log)
+```
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(model_gaussian_no_log, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+
+
+```{r}
+model_gaussian_log_link <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT, 
+                   family = gaussian(link = "log"), data = train)
+
+# Summary of the model
+summary(model_gaussian_log_link)
+
+predictions_gaussian_log_link <- predict(model_gaussian_log_link, newdata = test[, predictors])
+rmse_glm_gaussian_log_link <- sqrt(mean((predictions_gaussian_log_link- test[, response])^2))
+cat("RMSE:", rmse_glm_gaussian_log_link, "\n")
+```
+
+This has about the same RMSE as the other majority.
+
+
+```{r}
+plot(model_gaussian_log_link)
+```
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(model_gaussian_log_link, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+
+Let's try to use weights.
+```{r}
+model_gaussian_no_log <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT, 
+                   family = gaussian(), data = train)
+
+# Summary of the model
+summary(model_gaussian_no_log)
+
+fitted_values <- model_gaussian_no_log$fitted.values
+weights_v <- 1 / fitted_values^2
+
+W_model_gaussian_no_log <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT, 
+                   family = gaussian(), data = train, weights = weights_v)
+
+W_predictions_gaussian_no_log <- predict(W_model_gaussian_no_log, newdata = test[, predictors])
+W_rmse_glm_gaussian_no_log<- sqrt(mean((W_predictions_gaussian_no_log- test[, response])^2))
+cat("RMSE:", W_rmse_glm_gaussian_no_log, "\n")
+```
+
+
+```{r}
+plot(W_model_gaussian_no_log)
+```
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(W_model_gaussian_no_log, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+
+```{r}
+model_gamma_link <- glm(RENTGRS ~STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT , 
+                   family = Gamma(link = log), data = train)
+
+# Summary of the model
+summary(model_gamma_link)
+
+fitted_values <- model_gamma_link$fitted.values
+weights_v <- 1 / fitted_values^2
+
+W_model_gamma_link <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT , 
+                   family = Gamma(link = log), data = train, weights = weights_v)
+
+W_predictions_gamma_link <- predict(W_model_gamma_link, newdata = test[, predictors])
+W_rmse_glm_gamma_link<- sqrt(mean((W_predictions_gamma_link - test[, response])^2))
+cat("RMSE:", W_rmse_glm_gamma_link, "\n")
+
+```
+
+```{r}
+plot(model_gamma_link)
+```
+
+```{r}
+# Create a scatter plot of actual vs. predicted values
+predictions <- predict(model_gamma_link, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+```
+
+This is now much better
+Now, let's try more variables
+
+```{r}
+model_gamma_link <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT +PERNUM +HHMEMBS, 
+                   family = Gamma(link = log), data = train)
+
+# Summary of the model
+summary(model_gamma_link)
+
+fitted_values <- model_gamma_link$fitted.values
+weights_v <- 1 / fitted_values^2
+
+W_model_gamma_link <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + PERNUM + HHMEMBS, 
+                   family = Gamma(link = log), data = train, weights = weights_v)
+
+predictors = c("STATEFIP", "SEX", "AGE", "MARST", "BPL", "LANGUAGE", "DENSITY",
+                "INCTOT", "RACE", "CITIZEN", "EDUC", "EMPSTAT", "PERNUM","HHMEMBS")
+
+library(caret)
+W_predictions_gamma_link <- predict(W_model_gamma_link, newdata = test[, predictors])
+W_rmse_glm_gamma_link<- RMSE(W_predictions_gamma_link ,test[, predictors])
+cat("RMSE:", W_rmse_glm_gamma_link, "\n")
+
+plot(model_gamma_link)
+
+predictions <- predict(model_gamma_link, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+
+```
+
+Now with log . 
+```{r}
+
+model_gamma_link <- glm(log_RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + PERNUM + HHMEMBS, 
+                   family = Gamma(link = log), data = train)
+
+# Summary of the model
+summary(model_gamma_link)
+
+fitted_values <- model_gamma_link$fitted.values
+weights_v <- 1 / fitted_values^2
+
+W_model_gamma_link <- glm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + PERNUM + HHMEMBS, 
+                   family = Gamma(link = log), data = train, weights = weights_v)
+
+W_predictions_gamma_link <- predict(W_model_gamma_link, newdata = test[, predictors])
+W_rmse_glm_gamma_link<- sqrt(mean((W_predictions_gamma_link - test[, predictors])^2))
+cat("RMSE:", W_rmse_glm_gamma_link, "\n")
+
+plot(model_gamma_link)
+
+predictions <- predict(model_gamma_link, newdata = test, type = "response")
+plot(test[, response], predictions, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (GLM)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+
+```
+
+Let's go back and analyze other models
+
+First, a simpler model
+## Fit linear model 
+
+```{r}
+linearModel <- lm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + PERNUM + HHMEMBS, data = train)
+summary(linearModel)
+
+# Predict and evaluate
+predictions <- predict(linearModel, test)
+rmse <- sqrt(mean((predictions - test$RENTGRS)^2))
+print(paste("Mean Squared Error for Linear Regression: ", mse))
+```
+
+## LASSO AND RIDGE
+
+```{r}
+library(glmnet)
+
+# Prepare matrix for glmnet
+x <- model.matrix(log(RENTGRS) ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + PERNUM + HHMEMBS, data = train)
+y <- log(train$RENTGRS)
+x.test <- model.matrix(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT + PERNUM + HHMEMBS, data = test)
+
+# Fit Ridge Regression
+cv_fit <- cv.glmnet(x, y, alpha = 0)  # alpha = 0 for ridge regression
+best_lambda <- cv_fit$lambda.min # The best lambda according to cross-validation
+ridge_model <- glmnet(x, y, alpha = 0, lambda = best_lambda)
+
+summary(ridge_model)
+coef(ridge_model)
+cat("Ridge Lambda", ridge_model$lambda, "\n")
+cat("Ridge Dev Ratio", ridge_model$dev.ratio, "\n")
+
+ridge_pred <- predict(ridge_model, s = 0.01, newx = x.test)
+r_mse_ridge <- sqrt(mean((ridge_pred - test$RENTGRS)^2))
+print(paste("Mean Squared Error for Ridge: ", r_mse_ridge))
+
+# Residuals Analysis
+residuals_ridge <- test[, response] - ridge_pred
+plot(ridge_pred, residuals_ridge, 
+     xlab = "Predicted Values", ylab = "Residuals", 
+     main = "Residuals vs. Predicted Values")
+abline(h = 0, col = "red", lty = 2)
+
+# Check for homoscedasticity (constant variance)
+plot(sqrt(abs(residuals_ridge)) ~ ridge_pred,
+     xlab = "Fitted values",
+     ylab = "Square root of absolute residuals",
+     main = "Scale-Location Plot")
+smoothScatter(ridge_pred, sqrt(abs(residuals_ridge)), colramp = colorRampPalette(c("blue", "red")))
+
+# Evaluate Cook's distance for identifying influential points
+cooksd <- cooks.distance(final_ridge_model)
+influential_points <- which(cooksd > 4 / length(cooksd))
+points(predictions[influential_points], residuals[influential_points], col = "red", pch = 16) # Highlight influential points on the scatter plot
+legend("topright", legend = "Influential Points", col = "red", pch = 16)
+
+# Check for normality of residuals
+qqPlot(residuals_ridge)
+
+```
+```{r}
+# Fit Lasso Regression
+cv_fit <- cv.glmnet(x, y, alpha = 1)  
+best_lambda_lasso <- cv_fit$lambda.min
+lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda_lasso)
+
+#lasso_model <- glmnet(x, y, alpha = 1)
+lasso_pred <- predict(lasso_model, s = 0.01, newx = x.test)
+r_mse_lasso <- sqrt(mean((lasso_pred - test$RENTGRS)^2))
+print(paste("Mean Squared Error for Lasso: ",r_mse_lasso))
+
+summary(lasso_model)
+coef(lasso_model)
+cat("Lasso Lambda", lasso_model$lambda, "\n")
+cat("Lasso Dev Ratio", lasso_model$dev.ratio, "\n")
+
+# Create a scatter plot of actual vs. predicted values
+plot(test[, response], lasso_pred, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Actual vs. Predicted Values (Lasso)")
+abline(0, 1, col = "red", lty = 2)
+legend("topleft", legend = "Perfect Prediction", col = "red", lty = 2, bty = "n")
+
+# Residuals Analysis
+residuals_lasso <- test[, response] - lasso_pred
+
+# Plot residuals against predicted values
+plot(lasso_pred, residuals_lasso, 
+     xlab = "Predicted Values", ylab = "Residuals", 
+     main = "Residuals vs. Predicted Values (Lasso)")
+abline(h = 0, col = "red", lty = 2)
+
+# Check for homoscedasticity (constant variance)
+plot(sqrt(abs(residuals_lasso)) ~ lasso_pred,
+     xlab = "Fitted values",
+     ylab = "Square root of absolute residuals",
+     main = "Scale-Location Plot (Lasso)")
+smoothScatter(lasso_pred, sqrt(abs(residuals_lasso)), colramp = colorRampPalette(c("blue", "red")))
+
+# Evaluate Cook's distance for identifying influential points
+cooksd_lasso <- cooks.distance(final_lasso_model)
+influential_points_lasso <- which(cooksd_lasso > 4 / length(cooksd_lasso))
+points(lasso_pred[influential_points_lasso], residuals_lasso[influential_points_lasso], col = "red", pch = 16) # Highlight influential points on the scatter plot
+legend("topright", legend = "Influential Points", col = "red", pch = 16)
+
+# Check for normality of residuals using qqPlot
+qqPlot(residuals_lasso)
+
+```
+
+###############################################################################
+Now we will run a Bayesian Linear Regression
+```{r}
+# Bayesian estimation
+library(brms)
+
+#this takes an eternity so beware
+brm_model <- brm(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT,
+                 data = train) # can add MCMC settings
+
+# Summary of the Bayesian regression model
+summary(brm_model)
+plot(brm_model)
+stancode(brm_model)
+mcmc_diag(brm_model)
+```
+
+
+```{r}
+library(rpart)
+
+# Fit Decision Tree Model
+tree_model <- rpart(RENTGRS ~ STATEFIP + SEX + AGE + MARST + BPL + LANGUAGE + DENSITY + 
+                   INCTOT + RACE + CITIZEN + EDUC + EMPSTAT +PERNUM + HHMEMBS, data = train)
+tree_pred <- predict(tree_model, test)
+r_mse_tree <- sqrt(mean((tree_pred - test_data$RENTGRS)^2))
+print(paste("Root Mean Squared Error for Decision Tree: ",r_mse_tree))
+```
+
+
+
+###END UPDATE HERE
+
+## GAM MODEL
+```{r}
+library(mgcv)
+str(train)
+
+gam_model <- gam(RENTGRS ~ STATEFIP + SEX + s(AGE, k = 5) + MARST + 
+                 s(DENSITY, k = 5) + s(INCTOT, k = 5) + s(PERNUM, k = 5) + s(HHMEMBS, k = 5), 
+                 family=Gamma(link="log"), data=train)
+
+
+summary(gam_model)
+gam_pred <- predict(gam_model, test)
+r_mse_gam <- sqrt(mean((gam_pred - test$RENTGRS)^2))
+print(paste("Root Mean Squared Error for GAM: ", r_mse_gam))
+```
+
+## XGBOOST
+
+```{r}
+library(xgboost)
+x <- model.matrix(RENTGRS ~ STATEFIP + SEX + AGE + MARST + DENSITY + 
+                   INCTOT +PERNUM + HHMEMBS, data = train)
+y <-train$RENTGRS
+x.test <- model.matrix(RENTGRS ~ STATEFIP + SEX + AGE + MARST + DENSITY + 
+                   INCTOT +PERNUM + HHMEMBS, data = test)
+
+# Prepare data for xgboost
+dtrain <- xgb.DMatrix(data = x, label = y)
+dtest <- xgb.DMatrix(data = x.test)
+
+# Fit GBM Model
+params <- list(booster = "gbtree", objective = "reg:squarederror")
+gbm_model <- xgb.train(params = params, data = dtrain, nrounds = 100)
+gbm_pred <- predict(gbm_model, dtest)
+r_mse_gbm <- sqrt(mean((gbm_pred - test$RENTGRS)^2))
+print(paste("Root mean Squared Error for GBM: ", r_mse_gbm))
+```
+
