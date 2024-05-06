@@ -58,12 +58,12 @@ For the analysis of the rent price against different variables, we first should 
 ### Loading the datasets
 
 ```{r}
-setwd("C:/Users/julia/OneDrive/Documents/Columbia/Spring 2024/SML (STAT5241)/Final Proj")
+#setwd("C:/Users/julia/OneDrive/Documents/Columbia/Spring 2024/SML (STAT5241)/Final Proj")
 
-renters_2022 <- read.csv("renters_2022_transformed.csv")
-train_data <- read.csv("train_transformed.csv")
-test_data <- read.csv("test_transformed.csv")
-validation_data <- read.csv("validation_transformed.csv")
+renters_2022 <- read.csv("Data/renters_2022_transformed.csv")
+train_data <- read.csv("Data/train_transformed.csv")
+test_data <- read.csv("Data/test_transformed.csv")
+validation_data <- read.csv("Data/validation_transformed.csv")
 
 predictors <- c("STATEFIP", "SEX", "AGE", "MARST", "BPL", "LANGUAGE", "DENSITY",
                 "INCTOT", "RACE", "CITIZEN", "EDUC", "EMPSTAT", "REGION")
